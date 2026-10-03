@@ -3,7 +3,7 @@
 [![Build](https://github.com/thegreystone/mcp-email/actions/workflows/build.yml/badge.svg)](https://github.com/thegreystone/mcp-email/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/thegreystone/mcp-email)](https://github.com/thegreystone/mcp-email/releases/latest)
 [![Java 21+](https://img.shields.io/badge/Java-21%2B-blue)](https://adoptium.net/)
-[![Quarkus](https://img.shields.io/badge/Quarkus-3.21-blueviolet)](https://quarkus.io/)
+[![Quarkus](https://img.shields.io/badge/dynamic/xml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fthegreystone%2Fmcp-email%2Fmaster%2Fpom.xml&query=%2F%2F*%5Blocal-name()%3D'quarkus.platform.version'%5D&label=Quarkus&color=blueviolet)](https://quarkus.io/)
 [![GraalVM Native](https://img.shields.io/badge/GraalVM-native--image-orange)](https://www.graalvm.org/)
 [![License: BSD-3](https://img.shields.io/badge/License-BSD--3-green)](https://opensource.org/licenses/BSD-3-Clause)
 
@@ -38,7 +38,7 @@ For more information, see my [blog](https://hirt.se/blog/?p=1596).
 | `selfTestPdf` | Diagnostic: verify PDF text extraction works in this environment |
 | `searchEmails` | Search by subject, sender, or body |
 | `getUnreadCount` | Count unread emails in a folder |
-| `getNextUnreadEmail` | Get oldest unread email with all headers |
+| `getNextUnreadEmail` | Get oldest unread email with all headers. HTML bodies are converted to markdown |
 | **Triage** | |
 | `triageCompact` | Compact triage — from, subject, spam score, flags (start here) |
 | `triageEmails` | Full-header triage — use when compact is not enough |
@@ -48,11 +48,15 @@ For more information, see my [blog](https://hirt.se/blog/?p=1596).
 | `batchMoveEmails` | Move emails to multiple target folders in one call |
 | `moveToSpam` | Move emails to the cached spam folder |
 | `setEmailFlags` | Set any combination of seen, answered, forwarded, and flagged/starred on one or more emails |
-| `deleteEmail` | Permanently delete an email. **Disabled by default** — opt in via `EMAIL_ALLOW_DELETION=true` (see [Enabling permanent deletion](#enabling-permanent-deletion)) |
+| `deleteEmail` | Delete an email: moved to the trash folder, or removed permanently if the account has none. **Disabled by default** — opt in via `EMAIL_ALLOW_DELETION=true` (see [Enabling permanent deletion](#enabling-permanent-deletion)) |
+| `getTrashFolder` | Resolve and cache the trash folder that `deleteEmail` moves messages to (see [Special folders](#special-folders)) |
+| `setTrashFolder` | Override the trash folder for this session |
 | **Spam** | |
-| `getSpamFolder` | Auto-detect and cache the spam/junk folder |
-| `setSpamFolder` | Manually override the spam folder |
+| `getSpamFolder` | Resolve and cache the spam/junk folder (configured, special-use flag, or well-known name; see [Special folders](#special-folders)) |
+| `setSpamFolder` | Override the spam folder for this session |
 | **Composing** | |
+| `getDraftsFolder` | Resolve and cache the Drafts folder that `saveDraft` writes to (see [Special folders](#special-folders)) |
+| `setDraftsFolder` | Override the Drafts folder for this session |
 | `saveDraft` | Save a draft email for user review with CC/BCC (always available; preferred over send) |
 | `sendEmail` | Send an email via SMTP with CC/BCC. **Disabled by default** — opt in via `EMAIL_ALLOW_SENDING=true` (see [Enabling outbound sending](#enabling-outbound-sending)) |
 | `replyEmail` | Reply with proper threading headers and optional CC/BCC. **Disabled by default** — opt in via `EMAIL_ALLOW_SENDING=true` |
@@ -65,6 +69,9 @@ All tools (except `listAccounts`) require an `account` parameter — the name of
 
 The fastest way to get started is to download a pre-built release from the [Releases page](https://github.com/thegreystone/mcp-email/releases/latest). Two options are available:
 
+**Claude Desktop users:** the simplest install is the MCP Bundle, `mcp-email-server-<version>-macos-aarch64.mcpb`
+or `mcp-email-server-<version>-windows-x86_64.mcpb`, see [Setting up with Claude Desktop](#setting-up-with-claude-desktop).
+
 ### Option A: Native Binary (recommended)
 
 No Java installation required. Download the binary for your platform:
@@ -76,7 +83,15 @@ No Java installation required. Download the binary for your platform:
 | macOS Apple Silicon | `mcp-email-server-<version>-macos-aarch64` |
 | Windows x86_64 | `mcp-email-server-<version>-windows-x86_64.exe` |
 
-On Linux, make the binary executable: `chmod +x mcp-email-server-*-linux-*`
+On Linux and macOS, make the binary executable: `chmod +x mcp-email-server-*`
+
+The macOS binary is signed and notarized, so Gatekeeper accepts it as downloaded. The one exception is a
+first launch while offline, because Gatekeeper fetches the notarization ticket from Apple; if that
+happens, clear the quarantine flag once:
+
+```bash
+xattr -d com.apple.quarantine mcp-email-server-<version>-macos-aarch64
+```
 
 ### Option B: Uber-jar
 
@@ -98,17 +113,76 @@ Accounts are defined by convention: `EMAIL_ACCOUNTS_<NAME>_IMAP_*` and `EMAIL_AC
 | `EMAIL_ACCOUNTS_<NAME>_IMAP_HOST` | yes | | `imap.gmail.com` |
 | `EMAIL_ACCOUNTS_<NAME>_IMAP_USERNAME` | yes | | `you@gmail.com` |
 | `EMAIL_ACCOUNTS_<NAME>_IMAP_PASSWORD` | yes | | `abcd efgh ijkl mnop` |
-| `EMAIL_ACCOUNTS_<NAME>_IMAP_PORT` | no | `993` | |
-| `EMAIL_ACCOUNTS_<NAME>_IMAP_SSL` | no | `true` | |
+| `EMAIL_ACCOUNTS_<NAME>_IMAP_PORT` | no | `993` | `143` |
+| `EMAIL_ACCOUNTS_<NAME>_IMAP_SSL` | no | `true`, or `false` on port 143 | |
 | `EMAIL_ACCOUNTS_<NAME>_SMTP_HOST` | yes | | `smtp.gmail.com` |
 | `EMAIL_ACCOUNTS_<NAME>_SMTP_USERNAME` | yes | | `you@gmail.com` |
 | `EMAIL_ACCOUNTS_<NAME>_SMTP_PASSWORD` | yes | | `abcd efgh ijkl mnop` |
-| `EMAIL_ACCOUNTS_<NAME>_SMTP_PORT` | no | `587` | |
+| `EMAIL_ACCOUNTS_<NAME>_SMTP_PORT` | no | `587` | `465` |
 | `EMAIL_ACCOUNTS_<NAME>_SMTP_STARTTLS` | no | `true` | |
+| `EMAIL_ACCOUNTS_<NAME>_SMTP_SSL` | no | `false`, or `true` on port 465 | |
+| `EMAIL_ACCOUNTS_<NAME>_FROM` | no | the SMTP username | `Jane Doe <jane@example.com>` |
+| `EMAIL_ACCOUNTS_<NAME>_DRAFTS_FOLDER` | no | auto-detected | `INBOX.INBOX.Drafts` |
+| `EMAIL_ACCOUNTS_<NAME>_SPAM_FOLDER` | no | auto-detected | `INBOX.INBOX.Junk` |
+| `EMAIL_ACCOUNTS_<NAME>_TRASH_FOLDER` | no | auto-detected | `INBOX.INBOX.Trash` |
 
 For Gmail, create an [App Password](https://myaccount.google.com/apppasswords).
 
-You can define as many accounts as needed. For example, to add a `work` and `gmail` account, set environment variables for both `EMAIL_ACCOUNTS_WORK_*` and `EMAIL_ACCOUNTS_GMAIL_*`.
+`FROM` is the From address on everything the account sends or drafts, as a bare address or as
+`Display Name <address>`. It defaults to the SMTP username, which is the address itself for most providers;
+set it when the SMTP login is not an email address, to send from an alias, or to add a display name. Reply-all
+leaves the account's own addresses (the From address and the usernames) out of the recipients.
+
+You can define as many accounts as needed. For example, to add a `work` and `gmail` account, set environment
+variables for both `EMAIL_ACCOUNTS_WORK_*` and `EMAIL_ACCOUNTS_GMAIL_*`.
+
+### Transport security
+
+With the default ports, IMAP is TLS on 993 and SMTP is port 587 upgraded with STARTTLS; the STARTTLS upgrade
+is required, so a server that does not offer it is refused rather than sent the password in the clear. The
+two other common setups need only the port, since the TLS mode follows it:
+
+- **SMTP on port 465 (implicit TLS, "SMTPS")**, which some providers offer instead of 587: set
+  `EMAIL_ACCOUNTS_<NAME>_SMTP_PORT=465`. The connection is then encrypted from the first byte and the
+  STARTTLS setting is ignored.
+- **Plain IMAP on port 143**: set `EMAIL_ACCOUNTS_<NAME>_IMAP_PORT=143`. The connection is upgraded with
+  STARTTLS when the server offers it, and stays unencrypted otherwise (for a local or test server).
+
+For a non-standard port, set `IMAP_SSL` or `SMTP_SSL` explicitly; an explicit value always wins over the
+port rule. Set `SMTP_STARTTLS=false` only for a server that really has no TLS at all.
+
+### Special folders
+
+`saveDraft`, `moveToSpam` and `deleteEmail` need to know the account's Drafts, spam and trash folders. Most
+servers need no configuration; each folder is resolved on first use, in this order:
+
+1. A folder set for the current session with `setDraftsFolder` / `setSpamFolder` / `setTrashFolder`.
+2. The configured `EMAIL_ACCOUNTS_<NAME>_DRAFTS_FOLDER` / `_SPAM_FOLDER` / `_TRASH_FOLDER`. A configured
+   folder that does not exist on the server is reported as an error rather than silently falling back, so
+   the LLM can point out the misconfiguration and work around it with the `set*Folder` tool for the session.
+3. The folder the server flags as `\Drafts` / `\Junk` / `\Trash` (RFC 6154 special-use, supported by Gmail,
+   Dovecot, Exchange and most others).
+4. Well-known names such as `Drafts`, `[Gmail]/Drafts`, `INBOX.Drafts`, `Spam`, `Junk`, `[Gmail]/Spam`,
+   `Trash`, `[Gmail]/Trash`, `Deleted Items`.
+5. Any folder whose last path element is `Drafts`, `Draft`, `Spam`, `Junk`, `Junk E-mail`, `Bulk Mail`,
+   `Junk Email`, `Trash`, `Deleted Items`, `Deleted Messages` or a few localized trash names, which covers
+   providers that nest everything under a namespace prefix (e.g. OVH's `INBOX.INBOX.Drafts`).
+
+Set the variable explicitly if your provider uses a name none of the heuristics find, or if auto-detection
+picks the wrong folder. `deleteEmail` removes the message permanently only when no trash folder is found.
+
+### Network timeout
+
+One setting covers every connection of every account:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `EMAIL_NETWORK_TIMEOUT` | `60` | Seconds to wait when connecting to an IMAP or SMTP server, for the server to answer, and for a write to complete. |
+
+Without it a server that stops answering would hang the tool call, and with it the conversation, for good.
+The wait is per socket read, not per operation, so a large attachment over a slow link is fine as long as
+data keeps arriving. Raise it if a slow server times out on big searches; `0` disables the timeouts.
+Equivalent system property: `-Demail.network-timeout=60`.
 
 ### Safety flags — opt-in for irreversible actions
 
@@ -127,11 +201,39 @@ When `EMAIL_ALLOW_DELETION` is unset (or `false`), `deleteEmail` is still listed
 
 #### Enabling outbound sending
 
-When `EMAIL_ALLOW_SENDING` is unset (or `false`), the four outbound tools above all return an explanatory error and do nothing. **`saveDraft` is unaffected** — it only writes to the IMAP `Drafts` folder, so the LLM can still compose messages for the user to review and send manually from their mail client. This is the recommended default workflow even when sending is enabled.
+When `EMAIL_ALLOW_SENDING` is unset (or `false`), the four outbound tools above all return an explanatory error and do nothing. **`saveDraft` is unaffected** — it only writes to the IMAP Drafts folder (see [Special folders](#special-folders)), so the LLM can still compose messages for the user to review and send manually from their mail client. This is the recommended default workflow even when sending is enabled.
 
 ## Setting up with Claude Desktop
 
-1. Download a release (see [Quick Start](#quick-start)) or [build from source](#building-from-source).
+The easiest way is the MCP Bundle. There is no config file to edit:
+
+1. Download the `.mcpb` file for your platform from the
+   [Releases page](https://github.com/thegreystone/mcp-email/releases/latest):
+   `mcp-email-server-<version>-macos-aarch64.mcpb` or `mcp-email-server-<version>-windows-x86_64.mcpb`.
+
+2. Install it: double-click the file, or in Claude Desktop open *Settings → Extensions → Advanced settings →
+   Install Extension…* and pick the file. Claude Desktop shows its standard unsigned-extension notice, because
+   the bundle file itself carries no signature (the binary inside it is signed); confirm with *Install*.
+
+3. Installing does not ask for the account details, so open the extension's settings: in
+   *Settings → Extensions*, find *Email MCP Server* and click *Configure*. Fill in the IMAP and SMTP server,
+   username and password (passwords go to the operating system keychain). For Gmail, use an
+   [App Password](https://myaccount.google.com/apppasswords). The optional fields can usually stay empty:
+   *From* only if the SMTP username is not your email address or you want a display name, and the
+   *Drafts*, *Spam* and *Trash folder* fields only for providers where auto-detection picks the wrong folder
+   (see [Special folders](#special-folders)). Leave the two switches, *Allow sending* and
+   *Allow permanent deletion*, off unless you need them. Save.
+
+4. Make sure the extension is enabled and start a new chat. The email tools appear in the tool list; the
+   account is called `default` in the tools.
+
+The bundle contains the same native binary as the standalone download, signed and notarized on macOS and
+Authenticode-signed on Windows. It configures a single account with the default ports (993 with SSL for IMAP,
+587 with STARTTLS for SMTP); for several accounts, or other ports and SSL settings, use the manual route below.
+
+If you prefer the manual route:
+
+1. Download a release (see [Quick Start](#quick-start)) or [build from source](docs/DEVELOPMENT.md).
 
 2. Edit the Claude Desktop config file `claude_desktop_config.json`.
    On Windows it is located at `C:\Users\<UserName>\AppData\Roaming\Claude\claude_desktop_config.json`.
@@ -207,7 +309,7 @@ When `EMAIL_ALLOW_SENDING` is unset (or `false`), the four outbound tools above 
 
 ## Setting up with Claude Code
 
-1. Download a release (see [Quick Start](#quick-start)) or [build from source](#building-from-source).
+1. Download a release (see [Quick Start](#quick-start)) or [build from source](docs/DEVELOPMENT.md).
 
 2. Edit `~/.claude.json` and add an `mcpServers` section. Here is an example with two accounts (`work` and `gmail`):
 
@@ -277,33 +379,21 @@ When `EMAIL_ALLOW_SENDING` is unset (or `false`), the four outbound tools above 
 
 ## Building from Source
 
-Only needed if you want to contribute or run a development build.
-
-### Uber-jar
-
-**Prerequisites:** Java 21+ and Maven 3.9+
-
-```bash
-mvn package
-```
-
-The uber-jar will be at `target/mcp-email-server-<version>-runner.jar`.
-
-### Native image
-
-**Prerequisites:** [GraalVM 25](https://www.graalvm.org/downloads/) with `native-image`, and Maven 3.9+. On Windows, Visual Studio 2022 with the "Desktop development with C++" workload is also required.
-
-```bash
-mvn package -Dnative -DskipTests
-```
-
-The native binary will be at `target/mcp-email-server-<version>-runner` (or `.exe` on Windows).
+Only needed if you want to contribute or run a development build. Building the uber-jar and the native
+images, running the integration tests, packing the MCP Bundles and signing the binaries are described in
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Troubleshooting
 
 - **`AccessDeniedException: C:\WINDOWS\system32\config`**: on Windows, Claude Desktop may launch the server with `C:\WINDOWS\system32` as the working directory, causing Quarkus to fail when scanning for config files. The `-Duser.dir` argument in the example config overrides the working directory, and `-Dquarkus.config.locations=.` prevents Quarkus from scanning restricted system directories. Point `-Duser.dir` to any directory your user can write to.
 - **Server disconnects immediately**: make sure `-Dquarkus.mcp.server.stdio.enabled=true` is in the `args` before `-jar`.
-- **No log output visible**: Quarkus logs go to `mcp-email-server.log` (in the working directory), not to stdout/stderr, to avoid interfering with the STDIO transport. Check that file for errors.
+- **No log output visible**: Quarkus logs go to `mcp-email-server.log` (in the working directory), not to stdout/stderr, to avoid interfering with the STDIO transport. Check that file for errors. With the MCP Bundle the working directory is your home directory, so the log is `~/mcp-email-server.log`.
 - **Authentication errors**: for Gmail, you need an [App Password](https://myaccount.google.com/apppasswords), not your regular password. Make sure 2-Step Verification is enabled on your Google account first.
-- **Build fails** (building from source): ensure `JAVA_HOME` points to JDK 21+. The system `java` on PATH may differ from what Maven uses.
 - **"Unknown account" errors**: call `listAccounts` first to see which accounts are configured. Account names are lowercase as defined in the environment variables (e.g., `work`, `gmail`).
+
+## License
+
+The server is released under the BSD 3-Clause License, see [LICENSE](LICENSE). The release artifacts bundle
+third-party libraries under their own licenses; they are listed, with their licenses, in
+[docs/THIRD-PARTY.md](docs/THIRD-PARTY.md). Note in particular that PDF text extraction uses iText 7, which is
+licensed under the GNU Affero General Public License v3.0; see the note in that file.

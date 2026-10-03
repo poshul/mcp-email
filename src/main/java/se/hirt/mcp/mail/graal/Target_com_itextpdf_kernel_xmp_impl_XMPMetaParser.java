@@ -2,7 +2,6 @@
  * Copyright (C) 2026 Marcus Hirt
  *
  * This software is free:
- *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -26,30 +25,28 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package se.hirt.mcp.mail;
+package se.hirt.mcp.mail.graal;
 
-import com.itextpdf.kernel.pdf.PdfDocument;
-import com.itextpdf.kernel.pdf.PdfReader;
-import com.itextpdf.kernel.pdf.canvas.parser.PdfTextExtractor;
+import com.itextpdf.kernel.xmp.XMPError;
+import com.itextpdf.kernel.xmp.XMPException;
+import com.itextpdf.kernel.xmp.XMPMeta;
+import com.itextpdf.kernel.xmp.options.ParseOptions;
+import com.oracle.svm.core.annotate.Substitute;
+import com.oracle.svm.core.annotate.TargetClass;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
+/**
+ * Native-image substitution that removes iText's XMP metadata parser from the image.
+ * <p>
+ * The parser is the only code path that drags the JDK's Xerces XML stack (about 1000 classes and
+ * several megabytes of image) into the binary. This server only extracts text from PDFs and never
+ * needs the XMP metadata; iText already catches {@link XMPException} everywhere it parses XMP when
+ * opening a document, so throwing here simply leaves the document info untouched.
+ */
+@TargetClass(className = "com.itextpdf.kernel.xmp.impl.XMPMetaParser")
+final class Target_com_itextpdf_kernel_xmp_impl_XMPMetaParser {
 
-public class PdfTextExtractorUtil {
-
-	private PdfTextExtractorUtil() {
-	}
-
-	public static String extractText(byte[] pdfData) throws IOException {
-		try (var pdfDoc = new PdfDocument(new PdfReader(new ByteArrayInputStream(pdfData)))) {
-			var sb = new StringBuilder();
-			int pages = pdfDoc.getNumberOfPages();
-			for (int i = 1; i <= pages; i++) {
-				if (i > 1)
-					sb.append("\n\n");
-				sb.append(PdfTextExtractor.getTextFromPage(pdfDoc.getPage(i)));
-			}
-			return sb.toString();
-		}
+	@Substitute
+	public static XMPMeta parse(Object input, ParseOptions options) throws XMPException {
+		throw new XMPException("XMP metadata parsing is not available in the native image", XMPError.UNKNOWN);
 	}
 }

@@ -28,28 +28,45 @@
  */
 package se.hirt.mcp.mail;
 
-import com.itextpdf.kernel.pdf.PdfDocument;
-import com.itextpdf.kernel.pdf.PdfReader;
-import com.itextpdf.kernel.pdf.canvas.parser.PdfTextExtractor;
+import org.junit.jupiter.api.Test;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class PdfTextExtractorUtil {
+/** Attachment names as the model sees them: decoded, or null when there is no usable name. */
+class AttachmentNameTest {
 
-	private PdfTextExtractorUtil() {
+	@Test
+	void plainNamesPassThrough() {
+		assertEquals("report.pdf", EmailService.decodeAttachmentName("report.pdf"));
+		assertEquals("årsredovisning.pdf", EmailService.decodeAttachmentName("årsredovisning.pdf"));
 	}
 
-	public static String extractText(byte[] pdfData) throws IOException {
-		try (var pdfDoc = new PdfDocument(new PdfReader(new ByteArrayInputStream(pdfData)))) {
-			var sb = new StringBuilder();
-			int pages = pdfDoc.getNumberOfPages();
-			for (int i = 1; i <= pages; i++) {
-				if (i > 1)
-					sb.append("\n\n");
-				sb.append(PdfTextExtractor.getTextFromPage(pdfDoc.getPage(i)));
-			}
-			return sb.toString();
-		}
+	@Test
+	void encodedWordsAreDecoded() {
+		assertEquals("Faktura för året.pdf",
+				EmailService.decodeAttachmentName("=?UTF-8?Q?Faktura_f=C3=B6r_=C3=A5ret.pdf?="));
+		assertEquals("Bokföring.pdf", EmailService.decodeAttachmentName("=?UTF-8?B?Qm9rZsO2cmluZy5wZGY=?="));
+		assertEquals("Ärende 12.pdf", EmailService.decodeAttachmentName("=?ISO-8859-1?Q?=C4rende_12.pdf?="));
+	}
+
+	@Test
+	void unknownCharsetKeepsTheRawName() {
+		var raw = "=?X-NO-SUCH-CHARSET?Q?abc?=";
+		assertEquals(raw, EmailService.decodeAttachmentName(raw));
+	}
+
+	@Test
+	void headerValuesWithSeveralEncodedWordsAreDecoded() {
+		assertEquals("Re: Årsredovisning för 2026",
+				EmailService.decodeHeader("=?UTF-8?Q?Re=3A_=C3=85rsredovisning?= =?UTF-8?Q?_f=C3=B6r_2026?="));
+		assertEquals("plain ascii", EmailService.decodeHeader("plain ascii"));
+		assertNull(EmailService.decodeHeader(null));
+	}
+
+	@Test
+	void missingOrBlankNameIsNull() {
+		assertNull(EmailService.decodeAttachmentName(null));
+		assertNull(EmailService.decodeAttachmentName(""));
+		assertNull(EmailService.decodeAttachmentName("   "));
 	}
 }

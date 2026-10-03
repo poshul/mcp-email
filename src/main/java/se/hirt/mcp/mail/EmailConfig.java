@@ -32,42 +32,100 @@ import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
 
 import java.util.Map;
+import java.util.Optional;
 
 @ConfigMapping(prefix = "email")
 public interface EmailConfig {
 
-    Map<String, AccountConfig> accounts();
+	Map<String, AccountConfig> accounts();
 
-    interface AccountConfig {
-        ImapConfig imap();
-        SmtpConfig smtp();
-    }
+	/**
+	 * Timeout in seconds for every IMAP and SMTP connection of every account: connecting, waiting
+	 * for the server to answer, and writing to it. Without one, a stalled server hangs the tool
+	 * call, and with the STDIO transport the whole conversation, for good. The read timeout is per
+	 * socket read, not per operation, so a large download over a slow link is not cut off as long
+	 * as bytes keep arriving; only a server that goes silent trips it. {@code 0} disables the
+	 * timeouts. {@code EMAIL_NETWORK_TIMEOUT} in the environment.
+	 */
+	@WithDefault("60")
+	int networkTimeout();
 
-    interface ImapConfig {
-        String host();
+	interface AccountConfig {
+		ImapConfig imap();
 
-        @WithDefault("993")
-        int port();
+		SmtpConfig smtp();
 
-        String username();
+		/**
+		 * The From address of everything this account sends or drafts: a bare address, or
+		 * {@code Display Name <address>}. Defaults to the SMTP username, which is the address
+		 * itself for most providers. Needed when the SMTP login is not an email address, or to send
+		 * from an alias or with a display name. {@code EMAIL_ACCOUNTS_<NAME>_FROM} in the
+		 * environment.
+		 */
+		Optional<String> from();
 
-        String password();
+		/**
+		 * Full IMAP name of the Drafts folder, e.g. {@code INBOX.INBOX.Drafts}. When set, it is
+		 * used as is and auto-detection is skipped; a name that does not exist on the server is
+		 * reported as an error so that the folder can be overridden for the session with the
+		 * setDraftsFolder tool.
+		 */
+		Optional<String> draftsFolder();
 
-        @WithDefault("true")
-        boolean ssl();
-    }
+		/**
+		 * Full IMAP name of the spam/junk folder. Same semantics as {@link #draftsFolder()},
+		 * overridable with the setSpamFolder tool.
+		 */
+		Optional<String> spamFolder();
 
-    interface SmtpConfig {
-        String host();
+		/**
+		 * Full IMAP name of the trash folder that deleteEmail moves messages to. Same semantics as
+		 * {@link #draftsFolder()}, overridable with the setTrashFolder tool.
+		 */
+		Optional<String> trashFolder();
+	}
 
-        @WithDefault("587")
-        int port();
+	interface ImapConfig {
+		String host();
 
-        String username();
+		@WithDefault("993")
+		int port();
 
-        String password();
+		String username();
 
-        @WithDefault("true")
-        boolean starttls();
-    }
+		String password();
+
+		/**
+		 * Connect with TLS from the first byte (port 993). Unset means: on unless the port is 143,
+		 * the plain IMAP port. See {@link EmailService#imapSsl}.
+		 */
+		Optional<Boolean> ssl();
+	}
+
+	interface SmtpConfig {
+		String host();
+
+		@WithDefault("587")
+		int port();
+
+		String username();
+
+		String password();
+
+		/**
+		 * Upgrade the connection with STARTTLS. When enabled the upgrade is required: a server that
+		 * does not offer it is refused rather than talked to in the clear. This is the usual setup
+		 * on port 587. Ignored when {@link #ssl()} is on, since that connection is encrypted from
+		 * the start.
+		 */
+		@WithDefault("true")
+		boolean starttls();
+
+		/**
+		 * Connect with TLS from the first byte (implicit TLS, "SMTPS"), the usual setup on port
+		 * 465. Unset means: on if the port is 465, otherwise off, which keeps the port 587 +
+		 * STARTTLS behaviour for existing configurations. See {@link EmailService#smtpSsl}.
+		 */
+		Optional<Boolean> ssl();
+	}
 }
