@@ -50,7 +50,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AttachmentArchiveTest {
-	private static final String DAV = "/remote.php/dav/files/test%20user";
+	private static final String DAV = "/storage/team%20files";
 	private static final String PATH = "/Travel/2026/ASMS/attachments/invoice.pdf";
 	private static final byte[] SOURCE = {0, 1, 2, 13, 10, (byte) 255};
 	private final Map<String, byte[]> files = new HashMap<>();
@@ -121,7 +121,7 @@ class AttachmentArchiveTest {
 			}
 		};
 		service.allowArchiving = true;
-		service.nextcloudUrl = Optional.of("https://cloud.example.com");
+		service.webdavUrl = Optional.of("https://cloud.example.com" + DAV);
 		service.username = Optional.of("test user");
 		service.password = Optional.of("secret-password");
 		tool = new EmailTools();
@@ -171,6 +171,71 @@ class AttachmentArchiveTest {
 		assertTrue(archive(PATH).startsWith("Archived"));
 		assertEquals(List.of(DAV + "/Travel", DAV + "/Travel/2026", DAV + "/Travel/2026/ASMS",
 				DAV + "/Travel/2026/ASMS/attachments"), mkdirs);
+	}
+
+	@Test
+	void endpointTrailingSlashDoesNotChangeDestination() {
+		service.webdavUrl = Optional.of("https://storage.example.com" + DAV + "/");
+		assertTrue(archive(PATH).startsWith("Archived"));
+		assertArrayEquals(SOURCE, files.get(DAV + PATH));
+		assertFalse(mkdirs.contains(DAV));
+		assertFalse(mkdirs.contains("/storage"));
+	}
+
+	@Test
+	void endpointAtHostRootWorksWithOrWithoutTrailingSlash() {
+		for (String suffix : List.of("", "/")) {
+			service.webdavUrl = Optional.of("https://storage.example.com" + suffix);
+			directories.add("");
+			String path = "/Travel/host-root" + (suffix.isEmpty() ? "1" : "2") + ".pdf";
+			assertTrue(archive(path).startsWith("Archived"));
+			assertArrayEquals(SOURCE, files.get(path));
+		}
+		assertTrue(mkdirs.stream().allMatch(path -> path.equals("/Travel")));
+	}
+
+	@Test
+	void explicitNextcloudEndpointStillWorks() {
+		String endpoint = "/nextcloud/remote.php/dav/files/cloud%20owner";
+		service.webdavUrl = Optional.of("https://cloud.example.com" + endpoint + "/");
+		directories.add(endpoint);
+		assertTrue(archive(PATH).startsWith("Archived"));
+		assertArrayEquals(SOURCE, files.get(endpoint + PATH));
+		assertTrue(mkdirs.stream().allMatch(path -> path.startsWith(endpoint + "/Travel")));
+	}
+
+	@Test
+	void basicAuthUsernameIsNotTreatedAsAPathComponent() {
+		service.username = Optional.of("tenant/user%name");
+		assertTrue(archive(PATH).startsWith("Archived"));
+		assertArrayEquals(SOURCE, files.get(DAV + PATH));
+		String expectedAuth = "Basic " + Base64.getEncoder()
+				.encodeToString("tenant/user%name:secret-password".getBytes(StandardCharsets.UTF_8));
+		assertTrue(auth.stream().allMatch(expectedAuth::equals));
+	}
+
+	@Test
+	void invalidEndpointConfigurationFailsBeforeFetching() {
+		for (String url : List.of("not a url", "http://storage.example.com/dav", "/dav",
+				"https://user:secret@storage.example.com/dav", "https://storage.example.com/dav?token=secret",
+				"https://storage.example.com/dav#fragment")) {
+			service.webdavUrl = Optional.of(url);
+			String error = archiveError(PATH);
+			assertTrue(error.contains("EMAIL_ARCHIVE_WEBDAV_URL"));
+			assertFalse(error.contains("secret"));
+		}
+		assertEquals(0, fetches);
+		assertTrue(requests.isEmpty());
+	}
+
+	@Test
+	void invalidBasicAuthUsernameFailsBeforeFetching() {
+		for (String username : List.of("user:other", "user\nother")) {
+			service.username = Optional.of(username);
+			assertTrue(archiveError(PATH).contains("Basic authentication username"));
+		}
+		assertEquals(0, fetches);
+		assertTrue(requests.isEmpty());
 	}
 
 	@Test
@@ -239,19 +304,19 @@ class AttachmentArchiveTest {
 	@Test
 	void missingConfigurationIsClear() {
 		for (int missing = 0; missing < 3; missing++) {
-			service.nextcloudUrl = missing == 0 ? Optional.empty() : Optional.of("https://cloud.example.com");
+			service.webdavUrl = missing == 0 ? Optional.empty() : Optional.of("https://cloud.example.com" + DAV);
 			service.username = missing == 1 ? Optional.empty() : Optional.of("test user");
 			service.password = missing == 2 ? Optional.empty() : Optional.of("secret-password");
-			assertTrue(archiveError(PATH).contains("Configure EMAIL_ARCHIVE_NEXTCLOUD_URL"));
+			assertTrue(archiveError(PATH).contains("Configure EMAIL_ARCHIVE_WEBDAV_URL"));
 		}
 		assertEquals(0, fetches);
 	}
 
 	@Test
 	void requiresHttpsAndRejectsUserRootConfiguration() {
-		service.nextcloudUrl = Optional.of("http://cloud.example.com");
+		service.webdavUrl = Optional.of("http://cloud.example.com");
 		assertTrue(archiveError(PATH).contains("HTTPS"));
-		service.nextcloudUrl = Optional.of("https://cloud.example.com");
+		service.webdavUrl = Optional.of("https://cloud.example.com" + DAV);
 		service.root = "/";
 		assertTrue(archiveError(PATH).startsWith("Error"));
 		assertEquals(0, fetches);

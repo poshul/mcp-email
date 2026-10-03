@@ -53,13 +53,13 @@ public class AttachmentArchiveService {
 	@ConfigProperty(name = "email.allow-archiving", defaultValue = "false")
 	boolean allowArchiving;
 
-	@ConfigProperty(name = "email.archive.nextcloud.url")
-	Optional<String> nextcloudUrl = Optional.empty();
+	@ConfigProperty(name = "email.archive.webdav.url")
+	Optional<String> webdavUrl = Optional.empty();
 
-	@ConfigProperty(name = "email.archive.nextcloud.username")
+	@ConfigProperty(name = "email.archive.webdav.username")
 	Optional<String> username = Optional.empty();
 
-	@ConfigProperty(name = "email.archive.nextcloud.password")
+	@ConfigProperty(name = "email.archive.webdav.password")
 	Optional<String> password = Optional.empty();
 
 	@ConfigProperty(name = "email.archive.root", defaultValue = "/Travel")
@@ -73,29 +73,28 @@ public class AttachmentArchiveService {
 		if (!allowArchiving) {
 			throw new IllegalArgumentException("Archiving is disabled. Set EMAIL_ALLOW_ARCHIVING=true to enable it.");
 		}
-		if (nextcloudUrl.filter(s -> !s.isBlank()).isEmpty() || username.filter(s -> !s.isBlank()).isEmpty()
+		if (webdavUrl.filter(s -> !s.isBlank()).isEmpty() || username.filter(s -> !s.isBlank()).isEmpty()
 				|| password.filter(s -> !s.isBlank()).isEmpty()) {
-			throw new IllegalArgumentException("Configure EMAIL_ARCHIVE_NEXTCLOUD_URL, "
-					+ "EMAIL_ARCHIVE_NEXTCLOUD_USERNAME and EMAIL_ARCHIVE_NEXTCLOUD_PASSWORD before archiving.");
+			throw new IllegalArgumentException("Configure EMAIL_ARCHIVE_WEBDAV_URL, "
+					+ "EMAIL_ARCHIVE_WEBDAV_USERNAME and EMAIL_ARCHIVE_WEBDAV_PASSWORD before archiving.");
 		}
 		URI base;
 		try {
-			base = URI.create(nextcloudUrl.get());
+			base = URI.create(webdavUrl.get());
 		} catch (IllegalArgumentException e) {
-			throw new IllegalArgumentException("EMAIL_ARCHIVE_NEXTCLOUD_URL must be a valid HTTPS instance URL.");
+			throw new IllegalArgumentException("EMAIL_ARCHIVE_WEBDAV_URL must be a valid HTTPS WebDAV endpoint URL.");
 		}
 		if (!"https".equalsIgnoreCase(base.getScheme()) || base.getHost() == null || base.getRawUserInfo() != null
 				|| base.getRawQuery() != null || base.getRawFragment() != null) {
 			throw new IllegalArgumentException(
-					"EMAIL_ARCHIVE_NEXTCLOUD_URL must be an HTTPS instance URL without credentials, query or fragment.");
+					"EMAIL_ARCHIVE_WEBDAV_URL must be an HTTPS WebDAV endpoint URL without credentials, query or fragment.");
 		}
-		validateComponent(username.get());
-		if (username.get().contains(":")) {
-			throw new IllegalArgumentException("Nextcloud username must not contain a colon.");
+		if (username.get().contains(":") || username.get().codePoints().anyMatch(Character::isISOControl)) {
+			throw new IllegalArgumentException(
+					"WebDAV Basic authentication username must not contain a colon or control characters.");
 		}
 		String normalized = validatePath(root, path);
-		return URI.create(base.toASCIIString().replaceAll("/+$", "") + "/remote.php/dav/files/" + encode(username.get())
-				+ encodePath(normalized));
+		return URI.create(base.toASCIIString().replaceAll("/+$", "") + encodePath(normalized));
 	}
 
 	String normalizedPath(String path) {
@@ -114,7 +113,7 @@ public class AttachmentArchiveService {
 	private static String canonicalPath(String path) {
 		if (path == null || !path.startsWith("/") || path.endsWith("/")) {
 			throw new IllegalArgumentException(
-					"Archive paths must be absolute with a nonempty final component; the user root is forbidden.");
+					"Archive paths must be absolute with a nonempty final component; the endpoint root is forbidden.");
 		}
 		String normalized = Normalizer.normalize(path, Normalizer.Form.NFC);
 		for (String part : normalized.substring(1).split("/", -1))
@@ -130,7 +129,7 @@ public class AttachmentArchiveService {
 				|| part.codePoints().anyMatch(c -> Character.isISOControl(c) || (c >= 0xD800 && c <= 0xDFFF))
 				|| !Normalizer.normalize(part, Normalizer.Form.NFKC).equals(part)) {
 			throw new IllegalArgumentException(
-					"Invalid archive path or username component (encoded paths and traversal are forbidden).");
+					"Invalid archive path component (encoded paths and traversal are forbidden).");
 		}
 	}
 
@@ -153,7 +152,7 @@ public class AttachmentArchiveService {
 		} else {
 			requireStatus(existing.statusCode(), 404, "checking destination");
 			// The URI is built from a validated root and path. Create collections
-			// below the DAV user endpoint, never the endpoint itself.
+			// below the configured WebDAV endpoint, never the endpoint itself.
 			String url = destination.toASCIIString();
 			int slash = url.length() - encodePath(path).length();
 			while ((slash = url.indexOf('/', slash + 1)) >= 0) {

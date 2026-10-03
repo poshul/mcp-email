@@ -136,6 +136,37 @@ leaves the account's own addresses (the From address and the usernames) out of t
 You can define as many accounts as needed. For example, to add a `work` and `gmail` account, set environment
 variables for both `EMAIL_ACCOUNTS_WORK_*` and `EMAIL_ACCOUNTS_GMAIL_*`.
 
+### Attachment archiving to WebDAV
+
+`archiveAttachment` preserves attachment bytes directly in WebDAV storage and returns only filename,
+MIME type, byte count, SHA-256 and destination metadata. Prefer it over `getAttachment` when a file
+only needs to be preserved.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `EMAIL_ALLOW_ARCHIVING` | `false` | Set to `true` to enable archiving |
+| `EMAIL_ARCHIVE_WEBDAV_URL` | unset | Full HTTPS WebDAV endpoint, e.g. `https://storage.example.com/dav/` |
+| `EMAIL_ARCHIVE_WEBDAV_USERNAME` | unset | HTTP Basic authentication username |
+| `EMAIL_ARCHIVE_WEBDAV_PASSWORD` | unset | HTTP Basic authentication password or app password |
+| `EMAIL_ARCHIVE_ROOT` | `/Travel` | Archive path beneath the configured endpoint |
+
+All three WebDAV settings are required when archiving is enabled. The endpoint collection must already
+exist. For example, endpoint `https://storage.example.com/dav/` and destination
+`/Travel/2026/invoice.pdf` upload to `https://storage.example.com/dav/Travel/2026/invoice.pdf`.
+Missing parent directories beneath the endpoint are created automatically. Destination paths must
+include the archive root, use literal names (not percent encoding), and contain no traversal components.
+The endpoint URL itself can contain URL-encoded components, such as `%20` for a space.
+
+The backend must support HTTPS, Basic authentication, `GET`, `MKCOL`, `PUT`, and conditional creation
+with `If-None-Match: *`. Redirects are not followed. Identical existing files succeed without another
+upload; different contents cause an error and are never overwritten.
+
+For Nextcloud, set the full endpoint explicitly, for example
+`https://cloud.example.com/remote.php/dav/files/your-username/` (URL-encode the username component).
+This replaces the earlier `EMAIL_ARCHIVE_NEXTCLOUD_*` settings: rename the credentials to
+`EMAIL_ARCHIVE_WEBDAV_USERNAME` and `EMAIL_ARCHIVE_WEBDAV_PASSWORD`, and replace the old instance URL
+with the full endpoint in `EMAIL_ARCHIVE_WEBDAV_URL`. The old settings are no longer used.
+
 ### Transport security
 
 With the default ports, IMAP is TLS on 993 and SMTP is port 587 upgraded with STARTTLS; the STARTTLS upgrade
